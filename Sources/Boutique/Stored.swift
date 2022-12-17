@@ -1,8 +1,9 @@
 import Combine
+import IdentifiedCollections
 
 /// The @``Stored`` property wrapper to automagically initialize a ``Store``.
 @propertyWrapper
-public struct Stored<Item: Codable & Equatable> {
+public struct Stored<Item: Codable & Equatable & Identifiable> where Item.ID: CacheKeyConvertible {
 
     private let cancellableBox: CancellableBox
 
@@ -14,7 +15,7 @@ public struct Stored<Item: Codable & Equatable> {
 
     @MainActor
     /// The currently stored items
-    public var wrappedValue: [Item] {
+    public var wrappedValue: IdentifiedArrayOf<Item> {
         cancellableBox.store.items
     }
 
@@ -24,9 +25,9 @@ public struct Stored<Item: Codable & Equatable> {
 
     @MainActor public static subscript<Instance>(
         _enclosingInstance instance: Instance,
-        wrapped wrappedKeyPath: KeyPath<Instance, [Item]>,
+        wrapped wrappedKeyPath: KeyPath<Instance, IdentifiedArrayOf<Item>>,
         storage storageKeyPath: KeyPath<Instance, Self>
-    ) -> [Item] {
+    ) -> IdentifiedArrayOf<Item> {
         let wrapper = instance[keyPath: storageKeyPath]
 
         if wrapper.cancellableBox.cancellable == nil {

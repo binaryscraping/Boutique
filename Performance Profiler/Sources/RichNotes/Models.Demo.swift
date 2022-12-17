@@ -1,6 +1,6 @@
 import Foundation
 
-public struct RichNote: Codable, Equatable {
+public struct RichNote: Codable, Equatable, Identifiable {
     public var id: String
     public let createdAt: Date
     public let updatedAt: Date

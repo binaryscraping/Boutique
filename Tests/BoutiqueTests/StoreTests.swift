@@ -9,8 +9,8 @@ final class StoreTests: XCTestCase {
 
     override func setUp() async throws {
         store = Store<BoutiqueItem>(
-            storage: SQLiteStorageEngine.default(appendingPath: "Tests"),
-            cacheIdentifier: \.merchantID)
+            storage: SQLiteStorageEngine.default(appendingPath: "Tests")
+        )
 
         try await store.removeAll()
     }
@@ -201,7 +201,7 @@ final class StoreTests: XCTestCase {
         store.$items
             .dropFirst()
             .sink(receiveValue: { items in
-                XCTAssertEqual(items, uniqueItems)
+                XCTAssertEqual(items.elements, uniqueItems)
                 expectation.fulfill()
             })
             .store(in: &cancellables)

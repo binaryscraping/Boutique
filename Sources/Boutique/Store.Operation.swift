@@ -1,3 +1,5 @@
+import IdentifiedCollections
+
 public extension Store {
 
     /// An operation is a type that allows you to stack ``insert(_:)-7z2oe``,
@@ -47,7 +49,7 @@ public extension Store {
                 self.operations.removeLast()
 
                 self.operations.append(ExecutableAction(action: .insert, executable: {
-                    try await $0.performInsert(item, firstRemovingExistingItems: .items(removedItems))
+                  try await $0.performInsert(item, firstRemovingExistingItems: .items(IdentifiedArrayOf(uniqueElements: removedItems)))
                 }))
             } else if case .removeAll = self.operations.last?.action {
                 self.operations.removeLast()
@@ -90,7 +92,7 @@ public extension Store {
                 self.operations.removeLast()
 
                 self.operations.append(ExecutableAction(action: .insert, executable: {
-                    try await $0.performInsert(items, firstRemovingExistingItems: .items(removedItems))
+                    try await $0.performInsert(items, firstRemovingExistingItems: .items(IdentifiedArrayOf(uniqueElements: removedItems)))
                 }))
             } else if case .removeAll = self.operations.last?.action {
                 self.operations.removeLast()

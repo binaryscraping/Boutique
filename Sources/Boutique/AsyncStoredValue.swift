@@ -52,7 +52,7 @@ public struct AsyncStoredValue<Item: Codable & Equatable> {
     ///   - wrappedValue: An value set when initializing an @``AsyncStoredValue``
     ///   - storage: A `StorageEngine` that defines where the value will be stored.
     public init(wrappedValue: Item, storage: StorageEngine) {
-        let innerStore = Store<UniqueItem>(storage: storage, cacheIdentifier: \.id)
+        let innerStore = Store<UniqueItem>(storage: storage)
         self.cancellableBox = CancellableBox(innerStore)
 
         self.defaultValue = wrappedValue
@@ -153,7 +153,7 @@ private extension AsyncStoredValue {
 
     // An internal type to box the item being saved in the Store ensuring
     // we can only ever have one item due to the hard-coded `cacheIdentifier`.
-    struct UniqueItem: Codable, Equatable {
+    struct UniqueItem: Codable, Equatable, Identifiable {
         var id: String { "unique-value" }
         var value: Item
     }

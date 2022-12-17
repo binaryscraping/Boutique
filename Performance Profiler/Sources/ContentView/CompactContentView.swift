@@ -62,7 +62,7 @@ struct CompactContentView: View {
                 self.operation.isInProgress = false
             }
 
-            self.notes = $0
+            self.notes = $0.elements
         })
     }
 

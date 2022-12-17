@@ -1,5 +1,5 @@
 @_exported import Bodega
-import OrderedCollections
+import IdentifiedCollections
 import Foundation
 
 /// A fancy persistence layer.
@@ -43,17 +43,16 @@ import Foundation
 /// a stable and unique `cacheIdentifier` is to conform to `Identifiable` and point to `\.id`.
 /// That is *not* required though, and you are free to use any `String` property on your `Item`
 /// or even a type which can be converted into a `String` such as `\.url.path`.
-public final class Store<Item: Codable & Equatable>: ObservableObject {
+public final class Store<Item: Codable & Equatable & Identifiable>: ObservableObject where Item.ID: CacheKeyConvertible {
 
     private let storageEngine: StorageEngine
-    private let cacheIdentifier: KeyPath<Item, String>
 
     /// The items held onto by the ``Store``.
     ///
     /// The user can read the state of ``items`` at any time
     /// or subscribe to it however they wish, but you desire making modifications to ``items``
     /// you must use ``insert(_:)-7z2oe``, ``remove(_:)-3nzlq``, or ``removeAll()-9zfmy``.
-    @MainActor @Published public private(set) var items: [Item] = []
+    @MainActor @Published public private(set) var items: IdentifiedArrayOf<Item> = []
 
     /// Initializes a new ``Store`` for persisting items to a memory cache
     /// and a storage engine, to act as a source of truth.
@@ -62,15 +61,15 @@ public final class Store<Item: Codable & Equatable>: ObservableObject {
     ///   - storage: A `StorageEngine` to initialize a ``Store`` instance with.
     ///   - cacheIdentifier: A `KeyPath` from the `Item` pointing to a `String`, which the ``Store``
     ///   will use to create a unique identifier for the item when it's saved.
-    public init(storage: StorageEngine, cacheIdentifier: KeyPath<Item, String>) {
+    public init(storage: StorageEngine) {
         self.storageEngine = storage
-        self.cacheIdentifier = cacheIdentifier
 
         Task { @MainActor in
             do {
                 let decoder = JSONDecoder()
-                self.items = try await self.storageEngine.readAllData()
-                    .map({ try decoder.decode(Item.self, from: $0) })
+                let items = try await self.storageEngine.readAllData()
+                    .map { try decoder.decode(Item.self, from: $0) }
+                self.items = IdentifiedArrayOf(uniqueElements: items)
             } catch {
                 self.items = []
             }
@@ -272,14 +271,13 @@ public extension Store {
     ///   - cacheIdentifier: A `KeyPath` from the `Item` pointing to a `String`, which the ``Store``
     ///   will use to create a unique identifier for the item when it's saved.
     /// - Returns: A ``Store`` that populates items in memory so you can pass a ``Store`` to @``Stored`` in SwiftUI Previews.
-    static func previewStore(items: [Item], cacheIdentifier: KeyPath<Item, String>) -> Store<Item> {
+    static func previewStore(items: [Item]) -> Store<Item> {
         let store = Store(
-            storage: SQLiteStorageEngine(directory: .temporary(appendingPath: "Previews"))!, // No files are written to disk
-            cacheIdentifier: cacheIdentifier
+            storage: SQLiteStorageEngine(directory: .temporary(appendingPath: "Previews"))! // No files are written to disk
         )
 
         Task.detached { @MainActor in
-            store.items = items
+            store.items = IdentifiedArrayOf(uniqueElements: items)
         }
 
         return store
@@ -299,17 +297,14 @@ internal extension Store {
             try await self.removeItems(withStrategy: strategy, items: &currentItems)
         }
 
-        // Take the current items array and turn it into an OrderedDictionary.
-        let identifier = item[keyPath: self.cacheIdentifier]
-        let currentItemsKeys = currentItems.map({ $0[keyPath: self.cacheIdentifier] })
-        var currentValuesDictionary = OrderedDictionary<String, Item>(uniqueKeys: currentItemsKeys, values: currentItems)
-        currentValuesDictionary[identifier] = item
+        // Append or update item in in-memory storage.
+        currentItems.updateOrAppend(item)
 
         // We persist only the newly added items, rather than rewriting all of the items
         try await self.persistItem(item)
 
-        await MainActor.run { [currentValuesDictionary] in
-            self.items = Array(currentValuesDictionary.values)
+        await MainActor.run { [currentItems] in
+            self.items = currentItems
         }
     }
 
@@ -321,57 +316,60 @@ internal extension Store {
             try await self.removeItems(withStrategy: strategy, items: &currentItems)
         }
 
-        var insertedItemsDictionary = OrderedDictionary<String, Item>()
+      for item in items {
+        currentItems.updateOrAppend(item)
+      }
+
+//        var insertedItemsDictionary = OrderedDictionary<String, Item>()
 
         // Deduplicate items passed into `insert(items:)` by taking advantage
         // of the fact that an OrderedDictionary can't have duplicate keys.
-        for item in items {
-            let identifier = item[keyPath: self.cacheIdentifier]
-            insertedItemsDictionary[identifier] = item
-        }
+//        for item in items {
+//            let identifier = item[keyPath: self.cacheIdentifier]
+//            insertedItemsDictionary[identifier] = item
+//        }
 
         // Take the current items array and turn it into an OrderedDictionary.
-        let currentItemsKeys = currentItems.map({ $0[keyPath: self.cacheIdentifier] })
-        var currentValuesDictionary = OrderedDictionary<String, Item>(uniqueKeys: currentItemsKeys, values: currentItems)
+//        let currentItemsKeys = currentItems.map({ $0[keyPath: self.cacheIdentifier] })
+//        var currentValuesDictionary = OrderedDictionary<String, Item>(uniqueKeys: currentItemsKeys, values: currentItems)
 
         // Add the new items into the dictionary representation of our items.
-        for item in insertedItemsDictionary {
-            let identifier = item.value[keyPath: self.cacheIdentifier]
-            currentValuesDictionary[identifier] = item.value
-        }
+//        for item in insertedItemsDictionary {
+//            let identifier = item.value[keyPath: self.cacheIdentifier]
+//            currentValuesDictionary[identifier] = item.value
+//        }
 
         // We persist only the newly added items, rather than rewriting all of the items
-        try await self.persistItems(Array(insertedItemsDictionary.values))
+        try await self.persistItems(items)
 
-        await MainActor.run { [currentValuesDictionary] in
-            self.items = Array(currentValuesDictionary.values)
+        await MainActor.run { [currentItems] in
+            self.items = currentItems
         }
     }
 
     func performRemove(_ item: Item) async throws {
         try await self.removePersistedItem(item)
 
-        let cacheKeyString = item[keyPath: self.cacheIdentifier]
-        let itemKeys = Set([cacheKeyString])
-
         await MainActor.run {
-            self.items.removeAll(where: { item in
-                itemKeys.contains(item[keyPath: self.cacheIdentifier])
-            })
+          _ = self.items.remove(id: item.id)
         }
     }
 
-    func performRemove(_ items: [Item]) async throws {
-        let itemKeys = Set(items.map({ $0[keyPath: self.cacheIdentifier] }))
+  func performRemove(_ items: [Item]) async throws {
+    var currentItems = await self.items
 
-        try await self.removePersistedItems(items: items)
+    let itemIDs = items.map(\.id)
 
-        await MainActor.run {
-            self.items.removeAll(where: { item in
-                itemKeys.contains(item[keyPath: self.cacheIdentifier])
-            })
-        }
+    for id in itemIDs {
+      currentItems.remove(id: id)
     }
+
+    try await self.removePersistedItems(items: items)
+
+    await MainActor.run { [currentItems] in
+      self.items = currentItems
+    }
+  }
 
     func performRemoveAll() async throws {
         try await self.storageEngine.removeAllData()
@@ -386,32 +384,30 @@ internal extension Store {
 private extension Store {
 
     func persistItem(_ item: Item) async throws {
-        let cacheKey = CacheKey(item[keyPath: self.cacheIdentifier])
         let encoder = JSONEncoder()
 
-        try await self.storageEngine.write(try encoder.encode(item), key: cacheKey)
+      try await self.storageEngine.write(try encoder.encode(item), key: item.id.cacheKey)
     }
 
     func persistItems(_ items: [Item]) async throws {
-        let itemKeys = items.map({ CacheKey($0[keyPath: self.cacheIdentifier]) })
+      let itemKeys = items.map(\.id.cacheKey)
         let encoder = JSONEncoder()
         let dataAndKeys = try zip(itemKeys, items)
-            .map({ (key: $0, data: try encoder.encode($1)) })
+            .map { (key: $0, data: try encoder.encode($1)) }
 
         try await self.storageEngine.write(dataAndKeys)
     }
 
     func removePersistedItem(_ item: Item) async throws {
-        let cacheKey = CacheKey(item[keyPath: self.cacheIdentifier])
-        try await self.storageEngine.remove(key: cacheKey)
+      try await self.storageEngine.remove(key: item.id.cacheKey)
     }
 
     func removePersistedItems(items: [Item]) async throws {
-        let itemKeys = items.map({ CacheKey($0[keyPath: self.cacheIdentifier]) })
-        try await self.storageEngine.remove(keys: itemKeys)
+      let itemKeys = items.map(\.id.cacheKey)
+      try await self.storageEngine.remove(keys: itemKeys)
     }
 
-    func removeItems(withStrategy strategy: ItemRemovalStrategy<Item>, items: inout [Item]) async throws {
+    func removeItems(withStrategy strategy: ItemRemovalStrategy<Item>, items: inout IdentifiedArrayOf<Item>) async throws {
         let itemsToRemove = strategy.removedItems(items)
 
         // If we're using the `.removeNone` strategy then there are no items to invalidate and we can return early
@@ -424,7 +420,7 @@ private extension Store {
             try await self.storageEngine.removeAllData()
         } else {
             items = items.filter { !itemsToRemove.contains($0) }
-            let itemKeys = items.map({ CacheKey(verbatim: $0[keyPath: self.cacheIdentifier]) })
+          let itemKeys = items.map(\.id.cacheKey)
 
             if itemKeys.count == 1 {
                 try await self.storageEngine.remove(key: itemKeys[0])

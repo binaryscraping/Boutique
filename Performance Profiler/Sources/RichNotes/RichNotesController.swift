@@ -1,9 +1,10 @@
 import Boutique
 import SwiftUI
+import IdentifiedCollections
 
 final class RichNotesController: ObservableObject {
 
-    @Stored var notes: [RichNote]
+    @Stored var notes: IdentifiedArrayOf<RichNote>
 
     init(store: Store<RichNote>) {
         self._notes = Stored(in: store)
